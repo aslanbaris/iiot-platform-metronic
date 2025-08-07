@@ -1,0 +1,90 @@
+version: '3.8'
+
+services:
+  # Redis for caching and real-time data
+  redis:
+    image: redis:7-alpine
+    container_name: iiot-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - iiot-network
+      - basyx-network
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+
+  # MQTT removed - using BaSyx MQTT broker instead
+
+  # Node.js Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: iiot-backend
+    environment:
+      NODE_ENV: development
+      # Redis for caching
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      # BaSyx MQTT broker
+      MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
+      BASYX_MQTT_HOST: mosquitto
+      BASYX_MQTT_PORT: 1883
+      # BaSyx InfluxDB for time-series data
+      INFLUXDB_URL: http://influxdb:8086
+      INFLUXDB_TOKEN: S18VeAlq042B4naMX31oqIaSGmUmOLAC-DV3VIdkxDJuAhTXLTVFEchyTSmCcUAmB7Wu94KgExzV8gJaDjzR3Q==
+      INFLUXDB_ORG: basyx
+      INFLUXDB_BUCKET: iiot-data
+      # BaSyx MongoDB for metadata
+      MONGODB_URL: mongodb://mongoAdmin:mongoPassword@mongo:27017
+      MONGODB_DATABASE: iiot-metadata
+      JWT_SECRET: your_jwt_secret_key_here
+      PORT: 5000
+    ports:
+      - "5003:5000"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    networks:
+      - iiot-network
+      - basyx-network
+    depends_on:
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    command: node minimal-backend.js
+
+  # React Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: iiot-frontend
+    environment:
+      REACT_APP_API_URL: http://localhost:5000
+      REACT_APP_WS_URL: ws://localhost:5000
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - iiot-network
+      - basyx-network
+    depends_on:
+      - backend
+    restart: unless-stopped
+    command: npm start
+
+volumes:
+  redis_data:
+
+networks:
+  iiot-network:
+    driver: bridge
+  basyx-network:
+    external: true
+    name: basyx-setup_default
