@@ -65,6 +65,11 @@ export const MENU_SIDEBAR: MenuConfig = [
       { title: 'Dark Sidebar', path: '/dark-sidebar' },
     ],
   },
+  {
+    title: 'BaSyx Assets',
+    icon: Network,
+    path: '/basyx',
+  },
   { heading: 'User' },
   {
     title: 'Public Profile',

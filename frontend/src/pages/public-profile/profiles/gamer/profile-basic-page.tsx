@@ -1,4 +1,4 @@
-import { Fragment } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { PageMenu } from '@/pages/public-profile';
 import { UserHero } from '@/partials/common/user-hero';
 import { DropdownMenu9 } from '@/partials/dropdown-menu/dropdown-menu-9';
@@ -16,9 +16,29 @@ import { toAbsoluteUrl } from '@/lib/helpers';
 import { Button } from '@/components/ui/button';
 import { Container } from '@/components/common/container';
 import { ProfileGamerContent } from '.';
+import { useAuth } from '@/auth/context/auth-context';
+import { UserModel } from '@/auth/lib/models';
 
 export function ProfileGamerPage() {
-  const image = (
+  const { user } = useAuth();
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(false);
+  }, [user]);
+
+  if (loading) {
+    return <div>Loading...</div>;
+  }
+
+  const displayName = user?.displayName || user?.firstName || user?.email || 'User';
+  const userImage = user?.avatar ? (
+    <img
+      src={user.avatar}
+      className="rounded-full border-3 border-green-500 size-[100px] shrink-0 object-cover"
+      alt="User Avatar"
+    />
+  ) : (
     <img
       src={toAbsoluteUrl('/media/avatars/300-27.png')}
       className="rounded-full border-3 border-green-500 size-[100px] shrink-0"
@@ -26,16 +46,18 @@ export function ProfileGamerPage() {
     />
   );
 
+  const userInfo = [
+    ...(user?.location ? [{ label: user.location, icon: MapPin }] : []),
+    ...(user?.username ? [{ label: user.username, icon: Twitch }] : []),
+    { email: 'Level 22', icon: ScanEye }, // Gaming level - could be dynamic later
+  ];
+
   return (
     <Fragment>
       <UserHero
-        name="Floyd Miles"
-        image={image}
-        info={[
-          { label: 'SF, Bay Area', icon: MapPin },
-          { label: 'floydgg', icon: Twitch },
-          { email: 'Level 22', icon: ScanEye },
-        ]}
+        name={displayName}
+        image={userImage}
+        info={userInfo}
       />
       <Container>
         <Navbar>

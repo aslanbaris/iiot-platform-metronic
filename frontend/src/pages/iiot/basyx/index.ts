@@ -1,0 +1,1 @@
+export { default as BaSyxAssetsPage } from './basyx-assets';

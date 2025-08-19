@@ -43,7 +43,7 @@ import {
   AuthWelcomeMessagePage,
 } from '@/pages/auth';
 import { DefaultPage, Demo1DarkSidebarPage } from '@/pages/dashboards';
-import { IIOTDashboard } from '@/pages/iiot';
+import { IIOTDashboard, BaSyxAssetsPage } from '@/pages/iiot';
 import {
   NetworkAppRosterPage,
   NetworkAuthorPage,
@@ -102,6 +102,8 @@ export function AppRoutingSetup() {
         <Route element={<Demo1Layout />}>
           <Route path="/" element={<IIOTDashboard />} />
           <Route path="/dashboard" element={<IIOTDashboard />} />
+          <Route path="/basyx" element={<BaSyxAssetsPage />} />
+          <Route path="/basyx/assets" element={<BaSyxAssetsPage />} />
           <Route path="/metronic-default" element={<DefaultPage />} />
           <Route path="/dark-sidebar" element={<Demo1DarkSidebarPage />} />
           <Route

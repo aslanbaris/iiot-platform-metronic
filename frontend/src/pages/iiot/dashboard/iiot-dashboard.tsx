@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { apiClient, socketClient } from '@/lib/supabase';
 import { Activity, Cpu, Database, Thermometer, Zap, Wifi, AlertTriangle, CheckCircle } from 'lucide-react';
 import { Line, Bar } from 'react-chartjs-2';
+import BaSyxAssetsWidget from '@/components/basyx/BaSyxAssetsWidget';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -383,6 +384,9 @@ export function IIOTDashboard() {
           )}
         </CardContent>
       </Card>
+
+      {/* BaSyx Assets */}
+      <BaSyxAssetsWidget />
     </div>
   );
 }

@@ -27,6 +27,7 @@ const alertRoutes = require('./routes/alerts');
 const analyticsRoutes = require('./routes/analytics');
 const systemRoutes = require('./routes/system');
 const hybridRoutes = require('./routes/hybrid');
+const basyxRoutes = require('./routes/basyx');
 
 const app = express();
 const server = createServer(app);
@@ -96,6 +97,7 @@ app.use(`/api/${apiVersion}/alerts`, alertRoutes);
 app.use(`/api/${apiVersion}/analytics`, analyticsRoutes);
 app.use(`/api/${apiVersion}/system`, systemRoutes);
 app.use(`/api/${apiVersion}/hybrid`, hybridRoutes);
+app.use(`/api/${apiVersion}/basyx`, basyxRoutes);
 
 // Swagger documentation
 swaggerSetup(app, apiVersion);
@@ -144,9 +146,10 @@ async function startServer() {
       logger.info('Continuing without MongoDB...');
     }
     
-    // Connect to Redis
-    await connectRedis();
-    logger.info('Redis connected successfully');
+    // Connect to Redis (temporarily disabled for debugging)
+    // await connectRedis();
+    // logger.info('Redis connected successfully');
+    logger.info('Redis temporarily disabled for debugging');
     
     // Connect to MQTT (temporarily disabled for debugging)
     // try {
