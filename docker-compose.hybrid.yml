@@ -1,0 +1,475 @@
+version: '3.8'
+
+networks:
+  iiot_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+  supos_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
+  shared_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.22.0.0/16
+    attachable: true
+
+volumes:
+  # IIOT Platform volumes
+  iiot_redis_data:
+  iiot_influxdb_data:
+  iiot_mongodb_data:
+  
+  # supOS-CE volumes
+  supos_plugin_front:
+  supos_postgresql_data:
+  supos_emqx_data:
+  supos_nodered_data:
+  supos_grafana_data:
+
+services:
+  # ==========================================
+  # IIOT Platform Services
+  # ==========================================
+  
+  iiot-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: iiot-frontend
+    ports:
+      - "5174:80"  # IIOT Frontend port (nginx serves on port 80)
+    environment:
+      - VITE_API_URL=http://localhost:5001
+      - VITE_SOCKET_URL=http://localhost:5001
+    networks:
+      - iiot_network
+      - shared_network
+    restart: unless-stopped
+
+  iiot-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: iiot-backend
+    ports:
+      - "5001:3000"  # IIOT Backend port
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - REDIS_URL=redis://iiot-redis:6379
+      - INFLUXDB_URL=http://iiot-influxdb:8086
+      - MONGODB_URL=mongodb://iiot-mongodb:27017/iiot
+      - MQTT_BROKER_URL=mqtt://shared-mqtt:1883
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    depends_on:
+      - iiot-redis
+      - iiot-influxdb
+      - iiot-mongodb
+      - shared-mqtt
+    networks:
+      - iiot_network
+      - shared_network
+    restart: unless-stopped
+
+  iiot-redis:
+    image: redis:7-alpine
+    container_name: iiot-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - iiot_redis_data:/data
+    networks:
+      - iiot_network
+    restart: unless-stopped
+
+  iiot-influxdb:
+    image: influxdb:2.7
+    container_name: iiot-influxdb
+    ports:
+      - "8086:8086"
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=password123
+      - DOCKER_INFLUXDB_INIT_ORG=iiot-org
+      - DOCKER_INFLUXDB_INIT_BUCKET=iiot-bucket
+    volumes:
+      - iiot_influxdb_data:/var/lib/influxdb2
+    networks:
+      - iiot_network
+    restart: unless-stopped
+
+  iiot-mongodb:
+    image: mongo:7
+    container_name: iiot-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=password123
+    volumes:
+      - iiot_mongodb_data:/data/db
+    networks:
+      - iiot_network
+    restart: unless-stopped
+
+  # BaSyx Services (from IIOT Platform)
+  basyx-aas-registry:
+    image: eclipsebasyx/aas-registry:2.0.0-SNAPSHOT
+    container_name: basyx-aas-registry
+    ports:
+      - "8081:8080"
+    networks:
+      - iiot_network
+    restart: unless-stopped
+
+  basyx-submodel-registry:
+    image: eclipsebasyx/submodel-registry:2.0.0-SNAPSHOT
+    container_name: basyx-submodel-registry
+    ports:
+      - "8082:8080"
+    networks:
+      - iiot_network
+    restart: unless-stopped
+
+  basyx-aas-environment:
+    image: eclipsebasyx/aas-environment:2.0.0-SNAPSHOT
+    container_name: basyx-aas-environment
+    ports:
+      - "8083:8080"
+    environment:
+      - AAS_REGISTRY_PATH=http://basyx-aas-registry:8080
+      - SUBMODEL_REGISTRY_PATH=http://basyx-submodel-registry:8080
+    depends_on:
+      - basyx-aas-registry
+      - basyx-submodel-registry
+    networks:
+      - iiot_network
+    restart: unless-stopped
+
+  basyx-aas-web-ui:
+    image: eclipsebasyx/aas-gui:v2-240703
+    container_name: basyx-aas-web-ui
+    ports:
+      - "8084:3000"
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+      - AAS_REGISTRY_PATH=http://localhost:8081/api/v3.0
+      - SUBMODEL_REGISTRY_PATH=http://localhost:8082/api/v3.0
+      - AAS_REPO_PATH=http://localhost:8083/api/v3.0
+      - SUBMODEL_REPO_PATH=http://localhost:8083/api/v3.0
+    depends_on:
+      - basyx-aas-registry
+      - basyx-submodel-registry
+      - basyx-aas-environment
+    networks:
+      - iiot_network
+    restart: unless-stopped
+
+  # ==========================================
+  # Shared Services (MQTT Broker)
+  # ==========================================
+  
+  shared-mqtt:
+    image: eclipse-mosquitto:2.0.15
+    container_name: shared-mqtt
+    ports:
+      - "1884:1883"  # MQTT TCP (changed to avoid conflict)
+      - "9003:9001"  # MQTT WebSocket (changed to avoid conflict)
+    volumes:
+      - ./supos-ce/mount/emqx/etc:/mosquitto/config
+      - ./supos-ce/mount/emqx/data:/mosquitto/data
+      - ./supos-ce/mount/emqx/log:/mosquitto/log
+    networks:
+      - shared_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mosquitto_pub", "-h", "localhost", "-t", "test", "-m", "test"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ==========================================
+  # supOS-CE Services (Modified ports)
+  # ==========================================
+  
+  supos-frontend:
+    image: suposce/supos-ce-platform:1.0.10-T1
+    container_name: supos-frontend
+    ports:
+      - "3010:3000"  # supOS Frontend
+      - "4000:4000"
+      - "3001:3001"
+      - "3002:3002"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_API_MODEL=${OPENAI_API_MODEL:-gpt-4o}
+      - REACT_APP_OS_LANG=${LANGUAGE:-en-US}
+      - REACT_APP_BRIDGE_URL=http://localhost:9000
+    volumes:
+      - supos_plugin_front:/app/plugins-build
+    networks:
+      - supos_network
+      - shared_network
+    depends_on:
+      - supos-backend
+      - shared-mqtt
+      - integration-bridge
+    restart: unless-stopped
+
+  supos-backend:
+    image: suposce/supos-ce-backend:1.0.10-T1
+    container_name: supos-backend
+    environment:
+      - TZ=UTC
+      - MEM_OPTS=-Xms512m -Xmx2g -Duser.timezone=UTC
+      - JAVA_OPTS=-server -XX:+HeapDumpOnOutOfMemoryError
+      - ENV_DB_HOST=supos-postgresql
+      - ENV_DB_PORT=5432
+      - NODE_RED_HOST=supos-nodered
+      - NODE_RED_PORT=1880
+      - SYS_OS_MULTIPLE_TOPIC=false
+      - SYS_OS_VERSION=V1.00.00.10-C
+      - SYS_OS_LANG=${LANGUAGE:-en-US}
+      - SYS_OS_AUTH_ENABLE=true
+      - SYS_OS_APP_TITLE=supOS-CE
+      - SYS_OS_MQTT_TCP_PORT=1883
+      - SYS_OS_ENTRANCE_URL=http://localhost:8088
+      - MQTT_PLUGIN=emqx
+      - BRIDGE_URL=http://integration-bridge:9000
+      - IIOT_BACKEND_URL=http://iiot-backend:3000
+    ports:
+      - "8091:8080"  # supOS Backend
+      - "19099:19099"
+    volumes:
+      - ./supos-ce/mount/backend/apps:/data/apps
+      - ./supos-ce/mount/backend/system:/data/system
+      - ./supos-ce/mount/backend/log:/logs
+    depends_on:
+      - supos-postgresql
+      - shared-mqtt
+      - supos-nodered
+      - supos-keycloak
+    networks:
+      - supos_network
+      - shared_network
+    restart: unless-stopped
+
+  supos-postgresql:
+    image: timescale/timescaledb:2.20.0-pg17
+    container_name: supos-postgresql
+    environment:
+      - TZ=UTC
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+    ports:
+      - "5433:5432"  # Modified port to avoid conflict with system PostgreSQL
+    volumes:
+      - supos_postgresql_data:/var/lib/postgresql/data
+      - ./supos-ce/mount/postgresql/init-scripts:/docker-entrypoint-initdb.d
+      - ./supos-ce/mount/postgresql/init:/docker-entrypoint-initdb.d
+    networks:
+      - supos_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  supos-nodered:
+    image: nodered/node-red:4.0.8-22
+    container_name: supos-nodered
+    user: root
+    ports:
+      - "1880:1880"  # Node-RED UI
+    environment:
+      - FLOWS=/data/flows.json
+      - TZ=UTC
+      - OS_LANG=${LANGUAGE:-en-US}
+      - NODE_OPTIONS=--openssl-legacy-provider
+      - NODE_RED_ENABLE_PROJECTS=true
+      - NODE_RED_ENABLE_SAFE_MODE=false
+    volumes:
+      - supos_nodered_data:/data
+      - ./supos-ce/mount/node-red:/data
+      - ./supos-ce/mount/node-red/flows:/data/flows
+      - ./supos-ce/mount/node-red/settings.js:/data/settings.js
+    depends_on:
+      - shared-mqtt
+      - integration-bridge
+    networks:
+      - supos_network
+      - shared_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:1880"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  supos-keycloak:
+    image: keycloak/keycloak:26.0
+    container_name: supos-keycloak
+    ports:
+      - "8082:8080"  # Changed from 8081 to avoid conflict with other services
+    environment:
+      - KC_SSL_REQUIRED=none
+      - KC_PROXY=passthrough
+      - KC_HOSTNAME=localhost
+      - KC_BOOTSTRAP_ADMIN_USERNAME=admin
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
+      - KC_DB=postgres
+      - KC_DB_URL=jdbc:postgresql://supos-postgresql:5432/keycloak
+      - KC_DB_USERNAME=postgres
+      - KC_DB_PASSWORD=postgres
+      - KC_HEALTH_ENABLED=true
+      - KC_HOSTNAME_STRICT=false
+      - KC_HOSTNAME_STRICT_HTTPS=false
+      - KC_HTTP_ENABLED=true
+    volumes:
+      - ./supos-ce/mount/keycloak/data:/opt/keycloak/data
+      - ./supos-ce/mount/keycloak/themes:/opt/keycloak/themes
+      - ./supos-ce/mount/keycloak/providers:/opt/keycloak/providers
+    depends_on:
+      - supos-postgresql
+    command: start-dev
+    networks:
+      - supos_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  supos-grafana:
+    image: grafana/grafana:11.4.0
+    container_name: supos-grafana
+    user: root
+    ports:
+      - "3002:3000"  # Changed from 3000 to avoid conflict with IIOT frontend
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=Supos@1304
+      - GF_EXPLORE_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_DATABASE_TYPE=postgres
+      - GF_DATABASE_HOST=supos-postgresql:5432
+      - GF_DATABASE_NAME=grafana
+      - GF_DATABASE_USER=postgres
+      - GF_DATABASE_PASSWORD=postgres
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+    volumes:
+      - supos_grafana_data:/var/lib/grafana
+      - ./supos-ce/mount/grafana/dashboards:/var/lib/grafana/dashboards
+      - ./supos-ce/mount/grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - supos-postgresql
+      - integration-bridge
+    networks:
+      - supos_network
+      - shared_network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # ==========================================
+  # Integration Bridge Service
+  # ==========================================
+  
+  integration-bridge:
+    build:
+      context: ./integration
+      dockerfile: Dockerfile
+    container_name: integration-bridge
+    ports:
+      - "9000:9000"  # Integration Bridge API
+      - "9001:9001"  # WebSocket for monitoring
+      - "9002:9002"  # Metrics endpoint
+    environment:
+      - NODE_ENV=development
+      - IIOT_BACKEND_URL=http://iiot-backend:3000
+      - SUPOS_BACKEND_URL=http://supos-backend:8091
+      - MQTT_BROKER_URL=mqtt://shared-mqtt:1883
+      - REDIS_URL=redis://iiot-redis:6379
+      - LOG_LEVEL=info
+      - ENABLE_METRICS=true
+      - ENABLE_REAL_TIME_MONITORING=true
+      - BRIDGE_ID=integration-bridge-hybrid
+    depends_on:
+      - shared-mqtt
+      - iiot-redis
+    networks:
+      - shared_network
+      - iiot_network
+      - supos_network
+    volumes:
+      - ./integration/logs:/app/logs
+      - ./integration/.env:/app/.env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # ==========================================
+  # MQTT Bridge Service (UNS Integration)
+  # ==========================================
+  
+  mqtt-bridge:
+    build:
+      context: ./integration
+      dockerfile: Dockerfile.mqtt-bridge
+    container_name: mqtt-bridge
+    ports:
+      - "3001:3001"  # MQTT Bridge Management API
+      - "3002:3002"  # MQTT Bridge Metrics
+    environment:
+      - NODE_ENV=development
+      - MQTT_BROKER_URL=mqtt://shared-mqtt:1883
+      - MQTT_CLIENT_ID=mqtt-bridge-uns
+      - INFLUXDB_URL=http://iiot-influxdb:8086
+      - INFLUXDB_TOKEN=admin-token
+      - INFLUXDB_ORG=iiot-org
+      - INFLUXDB_BUCKET=iiot-bucket
+      - MONGODB_URL=mongodb://iiot-mongodb:27017
+      - MONGODB_DATABASE=iiot_data
+      - REDIS_URL=redis://iiot-redis:6379
+      - BRIDGE_CONFIG_PATH=/app/integration/mqtt-bridge.yml
+      - LOG_LEVEL=info
+      - ENABLE_METRICS=true
+      - ENABLE_DATA_SYNC=true
+      - BATCH_SIZE=100
+      - FLUSH_INTERVAL=5000
+    depends_on:
+      - shared-mqtt
+      - iiot-influxdb
+      - iiot-mongodb
+      - iiot-redis
+    networks:
+      - shared_network
+      - iiot_network
+      - supos_network
+    volumes:
+      - ./integration:/app/integration
+      - ./integration/logs:/app/logs
+      - ./integration/mqtt-bridge.yml:/app/integration/mqtt-bridge.yml
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
